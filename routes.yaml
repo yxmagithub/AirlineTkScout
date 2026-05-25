@@ -1,0 +1,46 @@
+# Flight Price Monitor - Route Configuration
+# IATA airport codes: https://www.iata.org/en/publications/directories/code-search/
+#
+# check_interval_minutes: how often to poll prices
+check_interval_minutes: 60
+
+routes:
+  # --- FLEXIBLE DATES example (date ranges) ---
+  - name: "New York to Los Angeles (Flexible Summer)"
+    origin: JFK
+    destination: LAX
+    # Check every departure date from Jul 10 to Jul 20 (step_days reduces API calls)
+    departure_date_range:
+      from: "2026-07-10"
+      to: "2026-07-20"
+      step_days: 2              # check every 2nd day (6 departure dates = 6 API calls)
+    # Check return dates from Jul 22 to Jul 30
+    return_date_range:
+      from: "2026-07-22"
+      to: "2026-07-30"
+      step_days: 2
+    # Optional: only consider trips where return - departure is between min and max days
+    trip_length_days:
+      min: 5
+      max: 10
+    adults: 1
+    cabin: ECONOMY              # ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
+    currency: USD
+    max_stops: 1                # 0 = non-stop only, 1 = max 1 connection, null = no filter
+    alert:
+      max_price: 400            # alert if price < this (set to null to disable)
+      drop_percent: 10          # alert if price drops by this % (set to null to disable)
+
+  # --- FIXED DATE example ---
+  - name: "Chicago to Miami (Fixed Date)"
+    origin: ORD
+    destination: MIA
+    departure_date: "2026-12-20"
+    return_date: null           # null or omit for one-way
+    adults: 2
+    cabin: ECONOMY
+    currency: USD
+    max_stops: 1
+    alert:
+      max_price: 250
+      drop_percent: 15
