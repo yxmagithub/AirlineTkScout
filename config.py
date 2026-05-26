@@ -16,10 +16,8 @@ def _require(key: str) -> str:
     return val
 
 
-class AmadeusConfig:
-    client_id: str = _require("AMADEUS_CLIENT_ID")
-    client_secret: str = _require("AMADEUS_CLIENT_SECRET")
-    environment: str = os.getenv("AMADEUS_ENV", "test")
+class SerpApiConfig:
+    api_key: str = _require("SERPAPI_KEY")
 
 
 class GmailConfig:

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-import amadeus_client
+import flight_client as amadeus_client
 import price_tracker
 from notifiers.base import BaseNotifier
 

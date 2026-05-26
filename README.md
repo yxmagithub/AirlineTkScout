@@ -1,26 +1,28 @@
-# Flight Ticket Price Monitor
+# AirlineTkScout — Flight Ticket Price Monitor
 
-A Python tool that monitors flight prices via the **Amadeus API** and sends alerts when prices drop below your target or fall by a configurable percentage. Supports flexible **date ranges**, **stop filters**, **Gmail**, **Telegram**, and **console** notifications.
+A Python tool that monitors flight prices via **Google Flights (SerpAPI)** and sends alerts when prices drop below your target or fall by a configurable percentage. Supports flexible **date ranges**, **stop filters**, **Gmail**, **Telegram**, and **console** notifications.
 
 ## Features
 
+- Real Google Flights prices via SerpAPI
 - Monitor multiple routes simultaneously
-- **Flexible date ranges** — search a window of departure and return dates; automatically finds the cheapest date combination
-- **Stop filter** — limit to non-stop only (`max_stops: 0`) or max 1 connection (`max_stops: 1`)
+- **Top 3 most competitive options** shown in every alert (price, airline, stops, dates)
+- **Flexible date ranges** — search a window of departure and return dates; finds the cheapest date combination automatically
+- **Stop filter** — non-stop only (`max_stops: 0`) or max 1 connection (`max_stops: 1`)
 - Alert when price drops below a fixed threshold
 - Alert when price drops by a configurable percentage vs. the last check
-- 24-hour alert cooldown to avoid notification spam (re-alerts immediately if price drops another 5%)
-- Price history stored in SQLite — tracks which dates gave the best price
+- 24-hour alert cooldown (re-alerts immediately if price drops another 5%)
+- Price history stored in SQLite
 - Configurable check interval (default: every 60 minutes)
-- `--once` flag to run a single check and exit (great for cron jobs)
+- `--once` flag for a single check (great for cron jobs)
 
 ## Quick Start
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/AirlineTkPVT_IAT.git
-cd AirlineTkPVT_IAT
+git clone https://github.com/yxmagithub/AirlineTkScout.git
+cd AirlineTkScout
 ```
 
 ### 2. Install dependencies
@@ -29,31 +31,28 @@ cd AirlineTkPVT_IAT
 pip install -r requirements.txt
 ```
 
-### 3. Get an Amadeus API key
+### 3. Get a SerpAPI key
 
-1. Sign up at [developers.amadeus.com](https://developers.amadeus.com)
-2. Create a new app — you'll receive a **Client ID** and **Client Secret**
-3. The free sandbox gives realistic test data for most major routes
+1. Sign up at [serpapi.com](https://serpapi.com) — **100 free searches/month** included
+2. Copy your API key from the dashboard
 
 ### 4. Configure credentials
 
 ```bash
 cp .env.example .env
-# Edit .env with your actual credentials
+# Edit .env with your actual values
 ```
 
 **.env fields:**
 
 | Variable | Required | Description |
 |---|---|---|
-| `AMADEUS_CLIENT_ID` | Yes | Amadeus API client ID |
-| `AMADEUS_CLIENT_SECRET` | Yes | Amadeus API client secret |
-| `AMADEUS_ENV` | No | `test` (sandbox) or `production` (default: `test`) |
-| `GMAIL_ADDRESS` | No | Your Gmail address for sending alerts |
-| `GMAIL_APP_PASSWORD` | No | Gmail [App Password](https://support.google.com/accounts/answer/185833) (not your regular password) |
+| `SERPAPI_KEY` | Yes | SerpAPI key |
+| `GMAIL_ADDRESS` | No | Gmail address for sending alerts |
+| `GMAIL_APP_PASSWORD` | No | Gmail [App Password](https://support.google.com/accounts/answer/185833) |
 | `ALERT_EMAIL_TO` | No | Recipient email (defaults to `GMAIL_ADDRESS`) |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token from [@BotFather](https://t.me/botfather) |
-| `TELEGRAM_CHAT_ID` | No | Your Telegram chat ID (send `/start` to [@userinfobot](https://t.me/userinfobot)) |
+| `TELEGRAM_CHAT_ID` | No | Your Telegram chat ID (from [@userinfobot](https://t.me/userinfobot)) |
 
 Gmail and Telegram are **optional** — the tool always logs to console and `monitor.log`.
 
@@ -85,7 +84,7 @@ routes:
     currency: USD
     max_stops: 1               # 0 = non-stop only | 1 = max 1 connection | null = no filter
     alert:
-      max_price: 400           # alert if price < this (null to disable)
+      max_price: 400           # alert if cheapest price < this (null to disable)
       drop_percent: 10         # alert if price drops by this % (null to disable)
 
   # Fixed date example
@@ -93,7 +92,7 @@ routes:
     origin: ORD
     destination: MIA
     departure_date: "2026-12-20"
-    return_date: null          # null or omit for one-way
+    return_date: null
     adults: 2
     cabin: ECONOMY
     currency: USD
@@ -103,34 +102,14 @@ routes:
       drop_percent: 15
 ```
 
-Use [IATA airport codes](https://www.iata.org/en/publications/directories/code-search/).
-
 ### 6. Run
 
 ```bash
-# Continuous loop (checks every N minutes as configured)
+# Continuous loop
 python main.py
 
 # Single check and exit
 python main.py --once
-```
-
-## Project Structure
-
-```
-├── main.py              # Entry point and scheduler loop
-├── monitor.py           # Core price-check and alert logic
-├── amadeus_client.py    # Amadeus API wrapper (date ranges, stop filtering)
-├── price_tracker.py     # SQLite price history and alert log
-├── config.py            # Environment variable loading
-├── routes.yaml          # Route and alert configuration
-├── notifiers/
-│   ├── base.py          # Abstract base notifier + message formatter
-│   ├── console_notifier.py
-│   ├── email_notifier.py
-│   └── telegram_notifier.py
-├── .env.example         # Credential template
-└── requirements.txt
 ```
 
 ## Alert Example
@@ -138,32 +117,54 @@ python main.py --once
 ```
 ============================================================
 Flight Price Alert: New York to Los Angeles (Flexible)
-Route  : JFK → LAX
-Dates  : 2026-07-12 → 2026-07-22  (searched 2026-07-10 – 2026-07-20, return 2026-07-22 – 2026-07-30)
-Cabin  : ECONOMY  |  Adults: 1
-Price  : USD 319.40  (AA, 1 stop(s))
-Reason : - price USD 319.40 is below your target of USD 400.00
-         - price dropped 12.3% (was USD 364.10, now USD 319.40)
+Route   : JFK → LAX
+Dates   : searched 2026-07-10 – 2026-07-20, return 2026-07-22 – 2026-07-30
+Cabin   : ECONOMY  |  Adults: 1
+
+Top 3 Most Competitive Options:
+  #1  USD 319.40  |  American Airlines  |  non-stop   |  2026-07-12 → 2026-07-22
+  #2  USD 334.20  |  Delta              |  1 stop(s)  |  2026-07-14 → 2026-07-24
+  #3  USD 352.80  |  United             |  1 stop(s)  |  2026-07-10 → 2026-07-22
+
+Alert   : - cheapest price USD 319.40 is below your target of USD 400.00
+          - price dropped 12.3% (was USD 364.10, now USD 319.40)
 ============================================================
+```
+
+## Project Structure
+
+```
+├── main.py              # Entry point and scheduler loop
+├── monitor.py           # Core price-check and alert logic
+├── flight_client.py     # Google Flights client via SerpAPI
+├── price_tracker.py     # SQLite price history and alert log
+├── config.py            # Environment variable loading
+├── routes.yaml          # Route and alert configuration
+├── notifiers/
+│   ├── base.py          # Abstract base + message formatter
+│   ├── console_notifier.py
+│   ├── email_notifier.py
+│   └── telegram_notifier.py
+├── .env.example         # Credential template
+└── requirements.txt
 ```
 
 ## API Call Budget
 
-With date ranges, each `(departure_date, return_date)` pair requires one Amadeus API call.
+SerpAPI free tier: **100 searches/month**.
 
-| Config | Departure dates | Return dates | Calls/check |
-|---|---|---|---|
-| Fixed dates | 1 | 1 | 1 |
-| 10-day range, step 2 | 5 | — | 5 |
-| 10-day dep + 8-day ret, step 2 | 5 | 4 | up to 20 |
+| Config | Calls per check cycle |
+|---|---|
+| 1 fixed-date route | 1 |
+| 1 route, 10-day dep range (step 2) | 5 |
+| 1 route, dep + ret range (step 2 each) | up to 25 |
 
-The Amadeus **free sandbox** has no hard call limit. The **production free tier** allows 2,000 calls/month. Increase `step_days` to reduce call volume.
+With a 60-minute interval and 1 fixed route, that's ~720 calls/month — upgrade to the $50/mo plan (5,000 searches) for heavier monitoring.
 
 ## Notes
 
-- **Sandbox vs Production**: The Amadeus sandbox returns realistic but not live prices. Set `AMADEUS_ENV=production` once your app is approved by Amadeus.
-- **Gmail App Password**: Required if your Gmail account has 2-Step Verification (recommended). Regular passwords won't work.
-- **Stop filter**: `max_stops: 0` passes `nonStop=true` to the API. `max_stops: 1` fetches more results and post-filters — slightly more API response data but still one call per date pair.
+- **Gmail App Password**: Required if your Gmail has 2-Step Verification. Regular passwords won't work.
+- **Stop filter**: `max_stops: 0` passes `stops=1` (nonstop only) to SerpAPI. `max_stops: 1` passes `stops=2` (1 stop or fewer).
 
 ## License
 
