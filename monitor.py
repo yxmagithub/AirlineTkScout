@@ -14,15 +14,14 @@ _ALERT_COOLDOWN_HOURS = 24
 def build_route_id(route: dict) -> str:
     dep_part = _range_key(route.get("departure_date_range"), route.get("departure_date", ""))
     ret_part = _range_key(route.get("return_date_range"), route.get("return_date") or "OW")
-    parts = [
+    return "-".join([
         route["origin"],
         route["destination"],
         dep_part,
         ret_part,
         route.get("cabin", "ECONOMY"),
         str(route.get("adults", 1)),
-    ]
-    return "-".join(parts)
+    ])
 
 
 def check_route(route: dict, notifiers: list[BaseNotifier]) -> None:
@@ -31,26 +30,23 @@ def check_route(route: dict, notifiers: list[BaseNotifier]) -> None:
 
     logger.info("Checking prices for: %s", name)
 
-    offer = amadeus_client.get_cheapest_offer(route)
-    if offer is None:
-        logger.warning("No offer data returned for %s — skipping.", name)
+    offers = amadeus_client.get_top_offers(route)
+    if not offers:
+        logger.warning("No offers returned for %s — skipping.", name)
         return
 
-    price = offer["price"]
-    currency = offer["currency"]
-    carrier = offer["carrier"]
-    stops = offer.get("stops", 0)
-    dep_date = offer.get("departure_date", route.get("departure_date", ""))
-    ret_date = offer.get("return_date") or route.get("return_date") or "one-way"
-    stop_label = "non-stop" if stops == 0 else f"{stops} stop(s)"
+    best = offers[0]
+    price = best["price"]
+    currency = best["currency"]
 
     logger.info(
-        "  Cheapest: %s %.2f | %s | %s | dep %s ret %s (%s)",
-        currency, price, carrier, stop_label, dep_date, ret_date, route_id,
+        "  Top %d offers found. Cheapest: %s %.2f (%s, %s stop(s), dep %s)",
+        len(offers), currency, price, best["carrier"],
+        best.get("stops", 0), best.get("departure_date", ""),
     )
 
     last = price_tracker.get_last_price(route_id)
-    price_tracker.save_price(route_id, offer)
+    price_tracker.save_price(route_id, best)
 
     alert_cfg = route.get("alert", {})
     max_price = alert_cfg.get("max_price")
@@ -60,7 +56,7 @@ def check_route(route: dict, notifiers: list[BaseNotifier]) -> None:
 
     if max_price is not None and price < max_price:
         reasons.append(
-            f"price {currency} {price:.2f} is below your target of {currency} {max_price:.2f}"
+            f"cheapest price {currency} {price:.2f} is below your target of {currency} {max_price:.2f}"
         )
 
     if last is not None and drop_percent is not None:
@@ -83,7 +79,7 @@ def check_route(route: dict, notifiers: list[BaseNotifier]) -> None:
 
     logger.info("  Sending alerts: %s", "; ".join(reasons))
     for notifier in notifiers:
-        notifier.send_alert(route, offer, reasons)
+        notifier.send_alert(route, offers, reasons)
 
     price_tracker.log_alert(route_id, price, "; ".join(reasons))
 
@@ -92,7 +88,6 @@ def _should_alert(route_id: str, current_price: float) -> bool:
     last_alert = price_tracker.get_last_alert(route_id)
     if last_alert is None:
         return True
-    # Re-alert immediately if price dropped another 5% since last alert
     if current_price < last_alert["price"] * 0.95:
         return True
     sent_at = datetime.fromisoformat(last_alert["sent_at"])

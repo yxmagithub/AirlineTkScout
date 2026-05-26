@@ -14,16 +14,17 @@ _SMTP_PORT = 587
 
 
 class EmailNotifier(BaseNotifier):
-    def send_alert(self, route: dict, offer: dict, reasons: list[str]) -> None:
+    def send_alert(self, route: dict, offers: list[dict], reasons: list[str]) -> None:
         if not GmailConfig.enabled:
             logger.debug("Email notifier skipped: GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set.")
             return
 
+        best = offers[0]
         subject = (
             f"Flight Alert: {route['origin']}→{route['destination']} "
-            f"@ {offer['currency']} {offer['price']:.2f}"
+            f"@ {best['currency']} {best['price']:.2f}"
         )
-        body = self.format_message(route, offer, reasons)
+        body = self.format_message(route, offers, reasons)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -45,9 +46,4 @@ class EmailNotifier(BaseNotifier):
 
 
 def _to_html(plain: str) -> str:
-    lines = plain.splitlines()
-    html_lines = ["<pre style='font-family:monospace;font-size:14px'>"]
-    for line in lines:
-        html_lines.append(line)
-    html_lines.append("</pre>")
-    return "\n".join(html_lines)
+    return "<pre style='font-family:monospace;font-size:14px'>" + plain + "</pre>"

@@ -11,12 +11,12 @@ _API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 class TelegramNotifier(BaseNotifier):
-    def send_alert(self, route: dict, offer: dict, reasons: list[str]) -> None:
+    def send_alert(self, route: dict, offers: list[dict], reasons: list[str]) -> None:
         if not TelegramConfig.enabled:
             logger.debug("Telegram notifier skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
             return
 
-        text = self.format_message(route, offer, reasons)
+        text = self.format_message(route, offers, reasons)
         url = _API_URL.format(token=TelegramConfig.bot_token)
         payload = {
             "chat_id": TelegramConfig.chat_id,

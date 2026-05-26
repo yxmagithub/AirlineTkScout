@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _client: Optional[Client] = None
 
 _MAX_COMBINATIONS = 50  # cap API calls per route per check cycle
+_TOP_N = 3              # number of results to surface per route
 
 
 def get_client() -> Client:
@@ -25,47 +26,66 @@ def get_client() -> Client:
     return _client
 
 
-def get_cheapest_offer(route: dict) -> Optional[dict]:
-    """Return the cheapest filtered offer across all date combinations for a route."""
+def get_top_offers(route: dict, top_n: int = _TOP_N) -> list[dict]:
+    """
+    Return up to top_n cheapest filtered offers for a route.
+
+    - Single date pair  → one API call, returns top_n offers from that response.
+    - Date ranges       → one API call per combination, keeps cheapest-per-combination,
+                          then returns the global top_n across all combinations.
+    """
     dep_dates = _departure_dates(route)
     ret_dates = _return_dates(route)
 
     combinations = list(product(dep_dates, ret_dates))
 
-    # Filter by trip length constraint
     trip_len = route.get("trip_length_days")
     if trip_len and ret_dates != [None]:
         combinations = [
             (dep, ret) for dep, ret in combinations
-            if ret is not None and _trip_days(dep, ret) is not None
+            if ret is not None
             and trip_len.get("min", 0) <= _trip_days(dep, ret) <= trip_len.get("max", 9999)
+            and _trip_days(dep, ret) > 0
         ]
 
     if len(combinations) > _MAX_COMBINATIONS:
         logger.warning(
-            "Route '%s' has %d date combinations — capped at %d to limit API calls. "
-            "Increase step_days to reduce calls.",
+            "Route '%s' has %d date combinations — capped at %d. "
+            "Increase step_days to reduce API calls.",
             route.get("name", f"{route['origin']}→{route['destination']}"),
             len(combinations),
             _MAX_COMBINATIONS,
         )
         combinations = combinations[:_MAX_COMBINATIONS]
 
-    best: Optional[dict] = None
-    for dep_date, ret_date in combinations:
-        offer = _fetch_offer(route, dep_date, ret_date)
-        if offer and (best is None or offer["price"] < best["price"]):
-            best = offer
+    all_offers: list[dict] = []
 
-    return best
+    if len(combinations) == 1:
+        # Single date pair: fetch several offers at once
+        dep_date, ret_date = combinations[0]
+        all_offers = _fetch_offers(route, dep_date, ret_date, count=top_n * 3)
+    else:
+        # Multiple date combinations: get cheapest per pair, collect, rank globally
+        for dep_date, ret_date in combinations:
+            offers = _fetch_offers(route, dep_date, ret_date, count=1)
+            if offers:
+                all_offers.append(offers[0])
+
+    all_offers.sort(key=lambda o: o["price"])
+    return all_offers[:top_n]
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _fetch_offer(route: dict, dep_date: str, ret_date: Optional[str]) -> Optional[dict]:
-    """Fetch cheapest offer for a single (departure_date, return_date) pair."""
+def _fetch_offers(
+    route: dict,
+    dep_date: str,
+    ret_date: Optional[str],
+    count: int = 5,
+) -> list[dict]:
+    """Fetch and filter flight offers for a single (departure_date, return_date) pair."""
     max_stops = route.get("max_stops")
 
     params: dict = {
@@ -74,7 +94,7 @@ def _fetch_offer(route: dict, dep_date: str, ret_date: Optional[str]) -> Optiona
         "departureDate": dep_date,
         "adults": route.get("adults", 1),
         "currencyCode": route.get("currency", "USD"),
-        "max": 10 if max_stops is not None and max_stops > 0 else 5,
+        "max": max(count * 2, 10) if (max_stops is not None and max_stops > 0) else count,
     }
 
     if ret_date:
@@ -84,7 +104,6 @@ def _fetch_offer(route: dict, dep_date: str, ret_date: Optional[str]) -> Optiona
     if cabin != "ECONOMY":
         params["travelClass"] = cabin
 
-    # Non-stop filter: the API supports nonStop=true for 0 stops
     if max_stops == 0:
         params["nonStop"] = "true"
 
@@ -95,40 +114,38 @@ def _fetch_offer(route: dict, dep_date: str, ret_date: Optional[str]) -> Optiona
             "Amadeus API error for %s→%s on %s: %s",
             route["origin"], route["destination"], dep_date, e,
         )
-        return None
+        return []
 
-    offers = response.data
-    if not offers:
-        return None
+    raw_offers = response.data or []
+    raw_offers.sort(key=lambda o: float(o["price"]["grandTotal"]))
 
-    # Sort by price ascending; the API does this but be explicit
-    offers.sort(key=lambda o: float(o["price"]["grandTotal"]))
-
-    # Apply max_stops post-filter for values > 0 (API only has nonStop flag)
     if max_stops is not None and max_stops > 0:
-        offers = [o for o in offers if _max_stops_in_offer(o) <= max_stops]
+        raw_offers = [o for o in raw_offers if _max_stops_in_offer(o) <= max_stops]
 
-    if not offers:
-        logger.debug(
-            "No offers matching max_stops=%s for %s→%s on %s",
-            max_stops, route["origin"], route["destination"], dep_date,
-        )
-        return None
+    result = []
+    for raw in raw_offers[:count]:
+        parsed = _parse_offer(raw, dep_date, ret_date)
+        if parsed:
+            result.append(parsed)
 
-    best = offers[0]
-    price = float(best["price"]["grandTotal"])
-    currency = best["price"]["currency"]
-    carriers = best.get("validatingAirlineCodes", [])
-    carrier = carriers[0] if carriers else "Unknown"
-    stops = _max_stops_in_offer(best)
+    return result
 
+
+def _parse_offer(raw: dict, dep_date: str, ret_date: Optional[str]) -> Optional[dict]:
     try:
-        first_seg = best["itineraries"][0]["segments"][0]
-        last_seg = best["itineraries"][0]["segments"][-1]
+        price = float(raw["price"]["grandTotal"])
+        currency = raw["price"]["currency"]
+        carriers = raw.get("validatingAirlineCodes", [])
+        carrier = carriers[0] if carriers else "Unknown"
+        stops = _max_stops_in_offer(raw)
+
+        first_seg = raw["itineraries"][0]["segments"][0]
+        last_seg = raw["itineraries"][0]["segments"][-1]
         departure_time = first_seg["departure"]["at"]
         arrival_time = last_seg["arrival"]["at"]
-    except (KeyError, IndexError):
-        departure_time = arrival_time = ""
+    except (KeyError, IndexError, ValueError) as e:
+        logger.debug("Failed to parse offer: %s", e)
+        return None
 
     return {
         "price": price,
@@ -139,7 +156,7 @@ def _fetch_offer(route: dict, dep_date: str, ret_date: Optional[str]) -> Optiona
         "departure_time": departure_time,
         "arrival_time": arrival_time,
         "stops": stops,
-        "offer_id": best["id"],
+        "offer_id": raw.get("id", ""),
     }
 
 
@@ -174,7 +191,7 @@ def _date_range(from_str: str, to_str: str, step: int = 1) -> list[str]:
     return result
 
 
-def _trip_days(dep: str, ret: Optional[str]) -> Optional[int]:
+def _trip_days(dep: str, ret: Optional[str]) -> int:
     if ret is None:
-        return None
+        return 0
     return (date.fromisoformat(ret) - date.fromisoformat(dep)).days
